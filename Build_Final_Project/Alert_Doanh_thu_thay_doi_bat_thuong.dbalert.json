@@ -1,0 +1,73 @@
+{
+  "evaluation": {
+    "source": {
+      "name": "growth_rate",
+      "display": "growth_rate",
+      "aggregation": "AGGREGATION_UNSPECIFIED"
+    },
+    "comparison_operator": "EQUAL",
+    "threshold": {
+      "value": {
+        "double_value": 1.0
+      }
+    },
+    "notification": {}
+  },
+  "query_lines": [
+    "WITH Days_Per_Month AS (",
+    "    -- Bước 1: Tính xem mỗi tháng dữ liệu chạy đến ngày bao nhiêu",
+    "    -- (Tháng cũ thì max là 30/31, tháng hiện tại thì là ngày hôm nay)",
+    "    SELECT ",
+    "        date_format(order_purchase_timestamp, 'yyyy-MM') as period,",
+    "        year(order_purchase_timestamp) as year,",
+    "        month(order_purchase_timestamp) as month,",
+    "        MAX(day(order_purchase_timestamp)) as days_passed",
+    "    FROM brazilian_ecommerce.gold.fact_sales",
+    "    GROUP BY 1, 2, 3",
+    "),",
+    "Daily_Avg_Calculation AS (",
+    "    -- Bước 2: Join với View Business để tính Doanh thu/Ngày",
+    "    SELECT ",
+    "        d.period,",
+    "        d.year,",
+    "        d.month,",
+    "        v.total_revenue,",
+    "        d.days_passed,",
+    "        -- Doanh thu trung bình ngày = Tổng thu / Số ngày đã qua",
+    "        (v.total_revenue / d.days_passed) as avg_daily_revenue",
+    "    FROM Days_Per_Month d",
+    "    JOIN brazilian_ecommerce.business.vw_sales_monthly_trend v ",
+    "      ON d.year = v.year AND d.month = v.month",
+    "),",
+    "Growth_Rate AS (",
+    "    -- Bước 3: Tính tăng trưởng dựa trên Tốc độ bán (Avg Daily)",
+    "    SELECT ",
+    "        period,",
+    "        days_passed,",
+    "        avg_daily_revenue,",
+    "        LAG(avg_daily_revenue) OVER (ORDER BY year, month) as prev_avg_revenue,",
+    "        ",
+    "        -- Công thức Growth dựa trên Avg Daily",
+    "        ROUND(",
+    "            ((avg_daily_revenue - LAG(avg_daily_revenue) OVER (ORDER BY year, month)) ",
+    "            / LAG(avg_daily_revenue) OVER (ORDER BY year, month)) * 100",
+    "        , 2) as growth_rate",
+    "    FROM Daily_Avg_Calculation",
+    ")",
+    "-- Lấy tháng mới nhất để check Alert",
+    "-- (Đoạn code WITH bên trên giữ nguyên) ...",
+    "",
+    "-- Sửa đoạn SELECT cuối cùng:",
+    "SELECT ",
+    "    *,",
+    "    -- Tạo cột cờ hiệu: Trả về 1 nếu vi phạm điều kiện, 0 nếu bình thường",
+    "    CASE ",
+    "        WHEN growth_rate > 30 THEN 1   -- Tăng quá nóng",
+    "        WHEN growth_rate < -20 THEN 1  -- Giảm quá sâu",
+    "        ELSE 0 ",
+    "    END as is_alert_triggered",
+    "FROM Growth_Rate",
+    "ORDER BY period DESC",
+    "LIMIT 1"
+  ]
+}
